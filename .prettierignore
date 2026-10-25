@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+pnpm-lock.yaml
+# Exported verbatim from the source doc; edit the doc, not this file.
+docs/brief.md
