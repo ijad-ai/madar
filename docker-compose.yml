@@ -1,0 +1,51 @@
+# Local development services. Ports bind to 127.0.0.1 only.
+# Image tags are pinned to a minor (Redis) or major (Postgres) version; switching to
+# digest pins is a Phase 8 hardening task (see docs/decisions.md, D-012).
+name: madar
+
+services:
+  redis:
+    image: redis:8.6-alpine
+    # BullMQ needs noeviction (evicted keys mean lost jobs) and AOF so queued jobs
+    # survive a restart.
+    command:
+      - redis-server
+      - --maxmemory-policy
+      - noeviction
+      - --appendonly
+      - 'yes'
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: madar
+      POSTGRES_DB: madar
+      # Local-only default so a clean clone starts without a .env. Override with
+      # POSTGRES_PASSWORD; real environments never use this value.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-madar_local_dev}
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      # Mount the parent directory: works for both the Postgres 18 data layout
+      # (/var/lib/postgresql/18/docker) and the older /var/lib/postgresql/data.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U madar -d madar']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  postgres-data:
