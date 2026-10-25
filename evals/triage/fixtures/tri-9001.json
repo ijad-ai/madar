@@ -1,0 +1,44 @@
+{
+  "id": "tri-9001",
+  "synthetic": true,
+  "source": {
+    "ciSystem": "github-actions",
+    "repoAlias": "repo-example-shop",
+    "runRef": "run-0a1b2c3d4e5f",
+    "failedOn": "2026-09"
+  },
+  "test": {
+    "framework": "playwright",
+    "fileAlias": "tests/checkout/apply-coupon.spec.ts",
+    "title": "applies a valid coupon at checkout",
+    "browser": "chromium"
+  },
+  "evidence": {
+    "errorMessage": "Error: locator.click: Timeout 10000ms exceeded. waiting for getByTestId('apply-coupon')",
+    "logExcerpt": "Diff in the same release renamed data-testid=\"apply-coupon\" to data-testid=\"coupon-apply\". Manual check on https://shop.example.test shows the button works.",
+    "retry": "failed-on-retry",
+    "hasTrace": true,
+    "hasScreenshot": true,
+    "artifacts": []
+  },
+  "labels": [
+    {
+      "labeler": "L1",
+      "class": "locator-drift",
+      "confidence": "high",
+      "rationale": "Test id renamed in the same release; the button still works."
+    },
+    {
+      "labeler": "L2",
+      "class": "locator-drift",
+      "confidence": "high",
+      "rationale": "Selector no longer matches; screenshot shows the intended button present."
+    }
+  ],
+  "finalClass": "locator-drift",
+  "anonymization": {
+    "procedureVersion": 1,
+    "reviewedBy": "L3",
+    "reviewedOn": "2026-10-25"
+  }
+}
