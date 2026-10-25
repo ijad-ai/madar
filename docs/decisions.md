@@ -147,7 +147,7 @@ The brief's layout has no home for cross-cutting code. `src/shared/` holds the l
 
 ### D-012 Image and action pinning
 
-`redis:8.6-alpine`, `postgres:18-alpine`, `actions/checkout@v6`, `actions/setup-node@v6`, `pnpm/action-setup@v4`. The build workspace cannot reach Docker Hub or the GitHub API, so these tags were chosen from public release notes and are confirmed by the first CI run. Digest pins for images and SHA pins for actions are part of Phase 8 hardening.
+`redis:8.6-alpine`, `postgres:18-alpine`, `actions/checkout@v6`, `actions/setup-node@v6`, `pnpm/action-setup@v4`. The build workspace cannot reach Docker Hub or the GitHub API, so these tags were chosen from public release notes. The first CI run (PR #1) pulled every image and action successfully. Digest pins for images and SHA pins for actions are part of Phase 8 hardening.
 
 ### D-013 Local Postgres password default
 
@@ -183,7 +183,9 @@ Claude Tag runs in the Team and Enterprise interfaces, and Managed Agents is not
 
 ### C-004 `docker compose up -d` could not run in the build workspace
 
-The workspace's network policy blocks Docker Hub, so images could not be pulled. `docker compose config` validates, and the CI `compose` job runs `docker compose up --wait` and checks both services. That CI run is the evidence for this acceptance criterion.
+The workspace's network policy blocks Docker Hub, so images could not be pulled. `docker compose config` validates, and the CI `compose` job runs `docker compose up --wait` and checks both services.
+
+**Resolved 2026-10-25:** the `compose` job passed on PR #1, so the acceptance criterion is met in CI.
 
 ---
 
