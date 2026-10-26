@@ -6,12 +6,12 @@ The full specification is [docs/brief.md](docs/brief.md) (v2.2). The project is 
 
 ## Status
 
-**Phase 0 passed its gate on 2026-10-26.** Phase 1 (Slack gateway and agent loop) is in progress.
+**Phase 1 (Slack gateway and agent loop) is built and awaiting its gate demo.** Mention the bot in an allowlisted channel and it answers in the thread. It has no tools yet: no sandbox, repos or CI access.
 
 | Phase | Scope                                                                             | State       |
 | ----- | --------------------------------------------------------------------------------- | ----------- |
 | 0     | Scaffold, config, logging, local services, threat model, decisions, triage rubric | Passed      |
-| 1     | Slack gateway and agent loop (no sandbox)                                         | Not started |
+| 1     | Slack gateway and agent loop (no sandbox)                                         | Gate review |
 | 2     | Sandbox per thread                                                                | Not started |
 | 3     | Read-only connectors, secrets proxy, redaction                                    | Not started |
 | 4     | Failure triage pilot (read-only)                                                  | Not started |
@@ -26,40 +26,86 @@ Requires Node 22.12+, pnpm 10 (via `corepack enable`) and Docker.
 
 ```sh
 pnpm install
-pnpm test
+pnpm test                     # unit tests; integration tests skip without services
 docker compose up -d --wait   # Redis and Postgres on 127.0.0.1
-cp .env.example .env          # for running code locally
+cp .env.example .env          # then fill in the Slack and Claude keys
+pnpm migrate
+pnpm dev                      # gateway and worker in one process
 ```
+
+Creating the Slack app, choosing a channel and the demo script: **[docs/slack-setup.md](docs/slack-setup.md)**.
+
+## Using it in Slack
+
+| Say                                            | What happens                                                                                                                      |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `@madar <question>`                            | A `⏳` reply appears in the thread, updates as the answer streams, then becomes the answer. The bot reads the thread for context. |
+| `@madar <another question>` in the same thread | Waits for the current request in that thread, then answers.                                                                       |
+| `@madar stop`                                  | Stops the current request and anything queued behind it in the thread.                                                            |
+| `@madar help`                                  | Usage.                                                                                                                            |
+
+The bot answers only in channels listed in [`config/projects.json`](config/README.md).
 
 ## Scripts
 
-| Command                             | What it does                                             |
-| ----------------------------------- | -------------------------------------------------------- |
-| `pnpm check`                        | Everything CI runs: typecheck, lint, format check, tests |
-| `pnpm typecheck`                    | `tsc --noEmit` in strict mode                            |
-| `pnpm lint`                         | ESLint with the type-checked strict ruleset              |
-| `pnpm format` / `pnpm format:check` | Prettier                                                 |
-| `pnpm test` / `pnpm test:watch`     | Vitest                                                   |
+| Command                             | What it does                                                               |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| `pnpm dev`                          | Gateway and worker in one process, restarting on changes                   |
+| `pnpm migrate`                      | Apply database migrations                                                  |
+| `pnpm build` / `pnpm start`         | Compile to `dist/` and run (`node dist/main.js <role>`)                    |
+| `pnpm check`                        | Typecheck, lint, format check, tests                                       |
+| `pnpm test` / `pnpm test:watch`     | Vitest; set `TEST_REDIS_URL` and `TEST_DATABASE_URL` for integration tests |
+| `pnpm format` / `pnpm format:check` | Prettier                                                                   |
 
-## Phase 0: what's here
+Roles, logs and incident steps: [docs/runbook.md](docs/runbook.md).
 
-- **Config** (`src/config/`): environment validated with Zod. Errors name variables, never values. Production refuses plaintext Redis and Postgres. [Details](src/config/README.md)
-- **Logging** (`src/shared/`): pino JSON logs with a correlation id per request, carried across awaits. Credentials under known keys are redacted. [Details](src/shared/README.md)
-- **Local services** (`docker-compose.yml`): Redis 8 (no eviction, AOF) and Postgres 18, bound to localhost.
-- **CI** (`.github/workflows/ci.yml`): typecheck, lint, format, tests, and a job that runs `docker compose up --wait` and checks both services.
-- **Docs**: [architecture](docs/architecture.md), [threat model](docs/threat-model.md), [data handling](docs/data-handling.md), [decisions](docs/decisions.md), [build-vs-buy spike](docs/spike-build-vs-buy.md), [runbook](docs/runbook.md).
-- **Triage eval set** (`evals/triage/`): [rubric](evals/triage/rubric.md), [anonymization procedure](evals/triage/anonymization.md), record schema and a leak guard that CI runs on every record.
+## What's built
+
+**Phase 1**
+
+- **Gateway** (`src/gateway/`):
+  - Bolt in Socket Mode, or HTTP with signature checks; events are acked before any work.
+  - Dedupe by event id, the channel allowlist, a per-user rate limit and immediate `stop` and `help`.
+  - One placeholder per request.
+- **Queue** (`src/queue/`):
+  - BullMQ with a Redis scheduler for strict per-thread order.
+  - Jobs carry ids only.
+  - A run whose worker dies restarts once, then is marked interrupted, so each request still has exactly one outcome.
+- **Agent** (`src/agent/`):
+  - The Claude Agent SDK with built-in tools off, no settings files, and a minimal subprocess environment (D-001).
+  - Turn, token, cost and time budgets.
+  - The thread goes to the model as JSON tagged by author; answers are escaped so they can't ping or mention anyone.
+- **Audit** (`src/audit/`): run state and an append-only audit log in Postgres. No run without an audit record, and no answer posted without recording it.
+
+**Phase 0**
+
+- Typed config and JSON logging with correlation ids.
+- Local services and CI.
+- The [threat model](docs/threat-model.md), [decisions](docs/decisions.md), [data handling](docs/data-handling.md), [architecture](docs/architecture.md) and the [build-vs-buy spike](docs/spike-build-vs-buy.md).
+- The [triage eval set](evals/triage/README.md) scaffolding.
+
+## Tests
+
+149 tests:
+
+- Unit tests run anywhere.
+- Integration tests use real Redis, Postgres, BullMQ, Bolt and the Agent SDK, against fake Slack and Claude APIs in `test/fakes/`. They cover ordering, dedupe, the allowlist, stop, the rate limit, the audit store being down, signed HTTP with ack timing, workers killed with SIGKILL in child processes, and the real entry point end to end.
+
+CI runs everything with `REQUIRE_INTEGRATION=1`.
 
 ## Layout
 
 ```text
 src/
-  gateway/ authz/ queue/ agent/ sandbox/ egress/ policy/ approvals/
-  mcp/ redaction/ qa/ triggers/ memory/ audit/   # each has a README saying which phase builds it
-  config/   # Phase 0: Zod env config
-  shared/   # Phase 0: logger and correlation ids (decision D-011)
-sandbox-image/  # Phase 2
-evals/          # triage (Phase 0 onward), injection, test-gen, healing
+  main.ts          # entry point: gateway | worker | all | migrate
+  gateway/ authz/ queue/ agent/ audit/ config/ shared/   # built (each has a README)
+  sandbox/ egress/ policy/ approvals/ mcp/ redaction/ qa/ triggers/ memory/   # later phases
+config/            # projects.json, the project map
+migrations/        # SQL migrations
+slack/             # Slack app manifest
+test/              # fakes, helpers, integration tests
+sandbox-image/     # Phase 2
+evals/             # triage (Phase 0 onward), injection, test-gen, healing
 docs/
 ```
 
