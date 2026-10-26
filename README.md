@@ -86,7 +86,7 @@ Roles, logs and incident steps: [docs/runbook.md](docs/runbook.md).
 
 ## Tests
 
-149 tests:
+The suite:
 
 - Unit tests run anywhere.
 - Integration tests use real Redis, Postgres, BullMQ, Bolt and the Agent SDK, against fake Slack and Claude APIs in `test/fakes/`. They cover ordering, dedupe, the allowlist, stop, the rate limit, the audit store being down, signed HTTP with ack timing, workers killed with SIGKILL in child processes, and the real entry point end to end.
