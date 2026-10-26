@@ -50,14 +50,8 @@ describe('WebClientSlackApi against the fake Slack API', () => {
     expect(await api.userName('U0UNKNOWN1')).toBe('U0UNKNOWN1');
   });
 
-  it('treats an existing reaction as success', async () => {
-    const root = slack.addUserMessage('C0TEST0003', 'hi');
-    await api.addReaction('C0TEST0003', root.ts, 'eyes');
-    await expect(api.addReaction('C0TEST0003', root.ts, 'eyes')).resolves.toBeUndefined();
-  });
-
   it('surfaces other Slack errors', async () => {
     slack.failNext('chat.update', 'cant_update_message');
-    await expect(api.update('C0TEST0003', '1.000001', 'x')).rejects.toThrow(/cant_update_message/);
+    await expect(api.update('C0TEST0001', '1.000001', 'x')).rejects.toThrow(/cant_update_message/);
   });
 });

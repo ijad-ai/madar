@@ -28,7 +28,6 @@ export const FAKE_BOT_ID = 'B0BOT00001';
 export class FakeSlackApi {
   readonly calls: FakeCall[] = [];
   readonly messages: FakeMessage[] = [];
-  readonly reactions: { channel: string; ts: string; name: string }[] = [];
   readonly users = new Map<string, string>([['U0ALICE001', 'alice']]);
   private server: Server | undefined;
   private clock = 1_761_000_000;
@@ -144,18 +143,6 @@ export class FakeSlackApi {
         message.edits.push(message.text);
         message.text = str(args['text']) ?? '';
         return { ok: true, channel: message.channel, ts: message.ts };
-      }
-      case 'reactions.add': {
-        const entry = {
-          channel: str(args['channel']) ?? '',
-          ts: str(args['timestamp']) ?? '',
-          name: str(args['name']) ?? '',
-        };
-        if (this.reactions.some((r) => JSON.stringify(r) === JSON.stringify(entry))) {
-          return { ok: false, error: 'already_reacted' };
-        }
-        this.reactions.push(entry);
-        return { ok: true };
       }
       case 'conversations.replies': {
         const channel = str(args['channel']) ?? '';

@@ -17,7 +17,6 @@ export interface SlackApi {
   /** Post a reply in a thread. Text is sent as-is; escape untrusted text first. */
   postInThread(channel: string, threadTs: string, text: string): Promise<string>;
   update(channel: string, ts: string, text: string): Promise<void>;
-  addReaction(channel: string, ts: string, name: string): Promise<void>;
   /** Thread messages oldest first, up to and including `latest`, at most `limit` of them. */
   threadMessages(
     channel: string,
@@ -92,15 +91,6 @@ export class WebClientSlackApi implements SlackApi {
     await this.client.chat.update({ channel, ts, text, parse: 'none', link_names: false });
   }
 
-  async addReaction(channel: string, ts: string, name: string): Promise<void> {
-    try {
-      await this.client.reactions.add({ channel, timestamp: ts, name });
-    } catch (error) {
-      // Reactions are a courtesy; an existing reaction is not an error.
-      if (slackErrorCode(error) !== 'already_reacted') throw error;
-    }
-  }
-
   async threadMessages(
     channel: string,
     threadTs: string,
@@ -149,10 +139,4 @@ export class WebClientSlackApi implements SlackApi {
 
 function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value.trim() === '' ? undefined : value;
-}
-
-export function slackErrorCode(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const data = (error as { data?: { error?: unknown } }).data;
-  return typeof data?.error === 'string' ? data.error : undefined;
 }
