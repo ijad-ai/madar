@@ -22,7 +22,9 @@ const SLOW_ENQUEUE_MS = 4_000;
  */
 describe.skipIf(!HAS_SERVICES)('gateway over HTTP (Bolt)', { timeout: 30_000 }, () => {
   const h = new Harness({ runner: new ScriptedRunner(), startWorker: false });
-  const outcomes: MentionOutcome[] = [];
+  /** Every outcome per event id: a Slack retry produces two for one id. */
+  const outcomes = new Map<string, MentionOutcome[]>();
+  const outcomesOf = (eventId: string) => outcomes.get(eventId) ?? [];
   const enqueued: RunJobData[] = [];
   let app: App;
   let url: string;
@@ -50,7 +52,7 @@ describe.skipIf(!HAS_SERVICES)('gateway over HTTP (Bolt)', { timeout: 30_000 }, 
       },
       deps: { ...h.mentionDeps, producer: slowProducer },
       logger: h.logger,
-      onHandled: (outcome) => outcomes.push(outcome),
+      onHandled: (outcome, eventId) => outcomes.set(eventId, [...outcomesOf(eventId), outcome]),
     }));
     const server = (await app.start(0)) as Server;
     url = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}/slack/events`;
@@ -124,16 +126,14 @@ describe.skipIf(!HAS_SERVICES)('gateway over HTTP (Bolt)', { timeout: 30_000 }, 
   });
 
   it('rejects a bad signature and a stale timestamp, and handles neither', async () => {
-    const before = outcomes.length;
-    expect(
-      (await post(mentionPayload(CHANNEL, 'forged'), { secret: 'wrong-secret-000000' })).status,
-    ).toBe(401);
+    const forged = mentionPayload(CHANNEL, 'forged');
+    expect((await post(forged, { secret: 'wrong-secret-000000' })).status).toBe(401);
+    const replayed = mentionPayload(CHANNEL, 'replayed');
     const stale = Math.floor(Date.now() / 1000) - 6 * 60;
-    expect((await post(mentionPayload(CHANNEL, 'replayed'), { timestamp: stale })).status).toBe(
-      401,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(outcomes.length).toBe(before);
+    expect((await post(replayed, { timestamp: stale })).status).toBe(401);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(outcomesOf(forged.event_id)).toEqual([]);
+    expect(outcomesOf(replayed.event_id)).toEqual([]);
   });
 
   it('processes a Slack retry of the same event once', async () => {
@@ -143,9 +143,12 @@ describe.skipIf(!HAS_SERVICES)('gateway over HTTP (Bolt)', { timeout: 30_000 }, 
       headers: { 'x-slack-retry-num': '1', 'x-slack-retry-reason': 'http_timeout' },
     });
     expect(retry.status).toBe(200);
-    await waitFor(() => (outcomes.includes('duplicate') ? true : undefined), {
-      what: 'duplicate outcome',
+    // The retry is answered "duplicate" at once; the original finishes after its slow enqueue.
+    await waitFor(() => (outcomesOf(payload.event_id).length === 2 ? true : undefined), {
+      timeoutMs: SLOW_ENQUEUE_MS + 5_000,
+      what: 'both deliveries handled',
     });
+    expect([...outcomesOf(payload.event_id)].sort()).toEqual(['duplicate', 'queued']);
     await waitFor(() => enqueued.find((d) => d.eventId === payload.event_id), {
       timeoutMs: SLOW_ENQUEUE_MS + 5_000,
     });
@@ -155,7 +158,7 @@ describe.skipIf(!HAS_SERVICES)('gateway over HTTP (Bolt)', { timeout: 30_000 }, 
   it('replies and runs nothing in a channel outside the project map', async () => {
     const payload = mentionPayload(OTHER_CHANNEL, 'not here');
     expect((await post(payload)).status).toBe(200);
-    await waitFor(() => (outcomes.includes('not_enabled') ? true : undefined), {
+    await waitFor(() => (outcomesOf(payload.event_id).includes('not_enabled') ? true : undefined), {
       what: 'not_enabled outcome',
     });
     expect(enqueued.find((d) => d.eventId === payload.event_id)).toBeUndefined();

@@ -9,7 +9,7 @@ export interface SlackAppOptions {
   readonly deps: MentionDeps;
   readonly logger: Logger;
   /** Called after each mention is handled; tests use it to observe outcomes. */
-  readonly onHandled?: (outcome: MentionOutcome) => void;
+  readonly onHandled?: (outcome: MentionOutcome, eventId: string) => void;
 }
 
 function boltLogger(logger: Logger): BoltLogger {
@@ -99,7 +99,7 @@ export function createSlackApp(options: SlackAppOptions): {
         'Slack retry',
       );
     }
-    options.onHandled?.(outcome);
+    options.onHandled?.(outcome, body.event_id);
   });
 
   app.error((error) => {
