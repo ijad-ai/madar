@@ -1,7 +1,15 @@
 # agent
 
-**Phase 1.** The Claude Agent SDK runner: system prompt, thread history as context, per-run budgets (turns, tokens, wall-clock), and progress updates in Slack.
+**Phase 1 (built, no tools).**
 
-The SDK's built-in shell and file tools are disabled. A Phase 1 test asserts the tool list holds only the tools we register. Where the runner lives is decision D-001.
+| File               | What it does                                                                                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `claude-runner.ts` | Runs one request through the Claude Agent SDK, locked down per D-001: built-in tools off, no settings sources, empty per-run directories. Enforces the turn, token, cost and wall-clock budgets. |
+| `sdk-env.ts`       | The subprocess environment: the API key, per-run directories and network settings, nothing else.                                                                                                 |
+| `context.ts`       | The thread as JSON for the model, each message tagged with its author.                                                                                                                           |
+| `system-prompt.ts` | The Phase 1 system prompt and its version.                                                                                                                                                       |
+| `runner.ts`        | The `AgentRunner` interface and outcomes.                                                                                                                                                        |
 
-**Phase 2** adds the sandbox-backed tools; **Phase 5** wires the policy hooks.
+The runner fails closed if the SDK ever reports a tool we didn't register.
+
+**Phase 2** adds sandbox-backed tools as in-process MCP tools; **Phase 5** wires the policy hooks.

@@ -27,6 +27,22 @@ How to read this file:
 | D-014 | TLS required in production config | Defaulted | `rediss://` and `sslmode=require` or stricter                                           |
 | D-015 | Redis 8                           | Defaulted | Matches the brief; Valkey is a drop-in if licensing prefers BSD                         |
 | D-016 | Node and pnpm versions            | Defaulted | Node 22 (`>=22.12 <23`), pnpm 10.28                                                     |
+| D-017 | Per-thread ordering               | Defaulted | A small Redis scheduler on top of open-source BullMQ                                    |
+| D-018 | One placeholder per request       | Defaulted | The gateway posts it; the worker only ever edits it                                     |
+| D-019 | Ids-only job payloads             | Defaulted | The worker reads the thread from Slack when the run starts                              |
+| D-020 | Claude API retries                | Defaulted | Capped at 3 (`AGENT_API_MAX_RETRIES`); the SDK default is 10                            |
+| D-021 | No session persistence in Phase 1 | Defaulted | Per-run directories deleted at run end; amends D-001                                    |
+| D-022 | Token budget                      | Defaulted | Input, output and cache tokens, enforced mid-stream                                     |
+| D-023 | Status for budget stops           | Defaulted | `failed`, with the limit that was hit in `outcome`                                      |
+| D-024 | Default model                     | Defaulted | `claude-sonnet-5-5`, set per deployment with `AGENT_MODEL`                              |
+| D-025 | Gateway audit rows                | Defaulted | None in Phase 1; gateway decisions go to logs                                           |
+| D-026 | Scope of `stop`                   | Defaulted | Cancels the current run and everything queued before the stop                           |
+| D-027 | Slack output escaping             | Defaulted | Model output can't mention, broadcast or disguise links                                 |
+| D-028 | Per-user rate limit               | Defaulted | 30 requests per hour by default                                                         |
+| D-029 | Who decides a restart             | Defaulted | The run processor; BullMQ's failure path is a backstop                                  |
+| D-030 | Append-only audit log             | Defaulted | Enforced by a trigger; retention purges get a path in Phase 8                           |
+| D-031 | Test seams                        | Defaulted | Fake API URLs and a run-directory hook; `SLACK_API_URL` refused in production           |
+| D-032 | Redis key prefix                  | Defaulted | `REDIS_KEY_PREFIX` namespaces every key                                                 |
 
 ---
 
@@ -52,13 +68,15 @@ How A is configured (option names taken from the SDK's type definitions):
 - `settingSources: []` stops the SDK loading user or project settings. This blocks T10: a repo that ships `.claude/settings.json` hooks or a `CLAUDE.md` cannot affect the worker.
 - `cwd` is an empty per-run directory. The checked-out repo exists only inside the sandbox.
 - `env` is passed explicitly with a minimal set of variables. The SDK replaces the subprocess environment with it, so connector tokens in the worker's environment never reach the subprocess.
-- `maxTurns` and `maxBudgetUsd` carry the per-run budgets; sessions persist to a per-run config dir so Phase 5 can resume them.
+- `maxTurns` and `maxBudgetUsd` carry the per-run budgets; sessions persist to a per-run config dir so Phase 5 can resume them. _(Phase 1 amendment: sessions are not persisted yet; see D-021.)_
 
 **Consequences.** Every tool call is an RPC to the sandbox, which adds a few milliseconds per call. The worker host becomes sensitive (it holds the API key) and must not run untrusted code.
 
 **Note for legal review.** The Agent SDK is distributed under Anthropic's commercial terms, not an open-source licence.
 
 **Test (Phase 1).** The tool list reported at session start contains only our tools. A planted `.claude/settings.json` in `cwd` has no effect.
+
+**Built in Phase 1.** `src/agent/claude-runner.ts`. Two settings the SDK needs that the proposal didn't list: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, so the only network call is the model, and a per-run `HOME` and `CLAUDE_CONFIG_DIR`, so no user-level settings exist to load. The tests plant settings, hooks and `CLAUDE.md` in `cwd`, `HOME` and the config dir, and check none of them take effect (`claude-runner.test.ts`).
 
 ### D-002 Credential model
 
@@ -165,6 +183,82 @@ The brief specifies Redis. Redis 8 is offered under AGPLv3 among other licences.
 
 `engines.node` is `>=22.12.0 <23` (pino 10 requires 22.12 or later). pnpm is pinned through `packageManager`. Dependencies are exact versions (`save-exact`).
 
+## Defaulted in Phase 1
+
+### D-017 Per-thread ordering on open-source BullMQ
+
+BullMQ's job groups are a paid (Pro) feature. `src/queue/thread-scheduler.ts` adds what Phase 1 needs, in Redis with atomic Lua scripts. Each thread has:
+
+- a pending set ordered by message timestamp;
+- a lock owned by a job (not a worker), held as a lease that the running job renews;
+- a stop request.
+
+A job runs only when it is first in its thread and holds the lock; otherwise it is delayed briefly and tried again. A job restarted after a crash takes its own lock back at once. A pending entry whose job no longer exists is removed, so a thread can't stall. Phase 5 keeps the lock while a run waits for approval.
+
+### D-018 One placeholder per request
+
+The gateway posts a single `⏳` reply when it accepts a request. The worker never posts again: it edits that message with progress and then the outcome. This is what makes "exactly one outcome" hold across crashes and duplicate deliveries.
+
+- **Progress marker.** Progress messages start with `⏳`; final messages never do. A run that was recorded as finished but whose placeholder still shows `⏳` was interrupted between the database write and the Slack edit. On redelivery the worker says so rather than guessing.
+- **Narrow gap.** If the gateway's placeholder post fails, the worker posts one itself. A crash between that post and recording it can leave a second, stale placeholder. This only happens when Slack is already failing.
+
+### D-019 Ids-only job payloads
+
+Jobs in Redis carry Slack ids and timestamps only, never message text, as `data-handling.md` requires. The worker reads the thread with `conversations.replies` when the run starts, which also picks up messages that arrived while the job was queued.
+
+### D-020 Claude API retries capped at 3
+
+By default the SDK retries a failed API call 10 times with exponential backoff, even for a 401: more than a minute of waiting on a bad key. `CLAUDE_CODE_MAX_RETRIES` (from `AGENT_API_MAX_RETRIES`, default 3) caps it. Retries show in the thread as "the Claude API is busy". The wall-clock budget still bounds the whole run.
+
+### D-021 No session persistence in Phase 1
+
+Phase 1 has no approvals to resume after, so `persistSession` is off and each run's directories are deleted when it ends. This is stricter than D-001's note that sessions persist. Phase 5 turns persistence on, under the retention in `data-handling.md`.
+
+### D-022 Token budget
+
+`AGENT_MAX_TOKENS` counts input, output and cache tokens across all model calls in a run. It is enforced while the answer streams, so a runaway answer stops mid-way rather than after it finishes. `AGENT_MAX_COST_USD` is passed to the SDK as a second guard.
+
+### D-023 Status for budget and timeout stops
+
+The `runs.status` check allows `running`, `completed`, `failed`, `interrupted` and `cancelled`. A run stopped by a budget or the timeout is `failed`, and `outcome` says which limit (`budget_tokens`, `budget_turns`, `budget_cost`, `timeout`). The thread message shows any partial answer.
+
+### D-024 Default model
+
+`AGENT_MODEL` defaults to `claude-sonnet-5-5`, which balances quality and cost for conversational Phase 1 answers. Change it per deployment. Every run records the model it used.
+
+### D-025 No gateway audit rows in Phase 1
+
+The gateway does not use Postgres. Its decisions (duplicate, not enabled, rate limited, stop requested) are logged with the event id. Runs are audited by the worker, which refuses to run without the audit store. Revisit in Phase 5, when approval clicks arrive at the gateway.
+
+### D-026 Scope of `stop`
+
+The brief says `stop` cancels the current run. It also cancels every request queued before the stop message in that thread, because someone who says "stop" rarely wants the next queued request to start a second later. The running request ends as "Stopped by <name>"; queued ones end as "Cancelled by <name> before it started". Requests sent after the `stop` run normally.
+
+### D-027 Slack output escaping
+
+Everything the model writes is escaped (`&`, `<`, `>`) before it reaches Slack, in progress updates and final answers. That stops prompt-injected text from pinging `@channel`, mentioning people, or hiding a link behind a label. Posts also set `parse: none` and `link_names: false`. Content redaction (secrets, PII) is still Phase 3.
+
+### D-028 Per-user rate limit
+
+`RATE_LIMIT_PER_USER_PER_HOUR` defaults to 30 requests in a fixed one-hour window per user (threat T23). Help, stop and empty mentions don't count.
+
+### D-029 The run processor decides restarts
+
+BullMQ's `maxStalledCount` is 3, above the processor's own limit of 2 attempts (D-004). When a job comes back after a crash, the processor reads its audit record and decides: restart (attempt 2) or close it as interrupted (attempt 3, or any run that had already used a tool). If BullMQ does give up on a job, a `failed` listener closes the run and edits the placeholder.
+
+### D-030 Append-only audit log
+
+A trigger rejects `UPDATE`, `DELETE` and `TRUNCATE` on `audit_events`. The 90- and 365-day retention purges (D-007) need a separate, audited maintenance path, which comes in Phase 8.
+
+### D-031 Test seams
+
+- `SLACK_API_URL` and `ANTHROPIC_BASE_URL` point the real WebClient and Agent SDK at local fakes in tests. `SLACK_API_URL` is refused when `NODE_ENV=production`.
+- `ClaudeRunnerOptions.prepareRunDirs` lets a test plant files in a run's directories, which is how the T10 check works. Nothing sets it in production.
+
+### D-032 Redis key prefix
+
+`REDIS_KEY_PREFIX` (default `madar`) namespaces every Redis key: queue, thread scheduler, dedupe and rate limits. Environments can then share a Redis safely, and tests use unique prefixes.
+
 ---
 
 ## Conflicts with the brief
@@ -187,6 +281,22 @@ The workspace's network policy blocks Docker Hub, so images could not be pulled.
 
 **Resolved 2026-10-25:** the `compose` job passed on PR #1, so the acceptance criterion is met in CI.
 
+### C-005 The Slack demo can't run from the build workspace
+
+The build workspace can't reach Slack and has no workspace tokens. Everything except the manual demo is covered by tests against a fake Slack Web API, the real WebClient and Bolt. **Owner: you.** [docs/slack-setup.md](slack-setup.md) is the setup guide and an eight-step demo script mapped to the acceptance criteria.
+
+### C-006 Some Slack details are verified against packages, not Slack's docs
+
+Slack's docs site isn't reachable from the build workspace. Bolt 5.1 and WebClient 8.2 type definitions and behaviour were used instead. Check these during the demo:
+
+- Socket Mode's connection limits (D-005);
+- `chat.update` rate limits (progress edits are throttled to one every 3 seconds per request, and skipped when rate-limited);
+- how model answers render as `mrkdwn`.
+
+### C-007 Signature verification applies to HTTP mode only
+
+The brief's Phase 1 gateway verifies signatures. In Socket Mode (D-005, the default), Slack doesn't sign events: the WebSocket is opened with the app-level token instead. Signature and timestamp checks run in HTTP mode, which is tested with signed, forged and stale requests (`test/integration/gateway-http.test.ts`).
+
 ---
 
 ## Gate log
@@ -194,3 +304,4 @@ The workspace's network policy blocks Docker Hub, so images could not be pulled.
 | Gate    | Date       | Result | Notes                                                                                                                                                              |
 | ------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Phase 0 | 2026-10-26 | Passed | Owner said "proceed" with no changes requested: D-001 to D-008 approved as proposed, C-001 (hostname-only limits for companion domains) accepted. Merged as PR #1. |
+| Phase 1 | Pending    |        | Awaiting the Slack demo (C-005) and review of D-017 to D-032                                                                                                       |

@@ -1,12 +1,27 @@
 # Data handling
 
-Status: Phase 0 proposal (decision D-007). Retention periods are proposals for you and your security or legal reviewer to confirm.
+Status: D-007, approved at the Phase 0 gate. The retention periods still need your security or legal reviewer's confirmation. What Phase 1 actually does is in [As built in Phase 1](#as-built-in-phase-1).
 
 ## Principles
 
 - Redact before data leaves its source boundary: before the model sees it, before it is written to the audit store, and before it is posted to Slack.
 - Store references (ids, URLs) rather than content wherever that works.
 - Staging uses masked or synthetic data. Projects that touch regulated data (for example health or payment data) are marked `regulated` in the project map and get the stricter rules below.
+
+## As built in Phase 1
+
+| Data                               | What Phase 1 does with it                                                                                                                    |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Thread messages                    | Read from Slack at run start (up to the last 60 messages, capped in size) and sent to the Claude API as the prompt. **Not stored** by Madar. |
+| Model answers                      | Written into the request's Slack placeholder. **Not stored** by Madar.                                                                       |
+| Queue jobs (Redis)                 | Ids and timestamps only (`src/queue/jobs.ts`, schema-enforced). Completed jobs are removed after 1 hour, failed ones after 7 days.           |
+| Dedupe and rate-limit keys (Redis) | Event ids for 24 hours; per-user counters for 1 hour.                                                                                        |
+| `runs` (Postgres)                  | Ids, status, outcome, model, attempt, token counts and cost. No message content.                                                             |
+| `audit_events` (Postgres)          | Kinds such as `run.started` and `run.finished`, the actor's Slack id, outcome and usage. No message content. Append-only.                    |
+| Agent SDK working files            | Created per run (`cwd`, `HOME`, config dir) and deleted when the run ends; sessions are not persisted (D-021).                               |
+| Logs                               | Event ids, Slack ids, outcomes and usage. Credentials under known keys are redacted; no message text is logged.                              |
+
+**Not yet in place:** content redaction (Phase 3) and audit retention purges (Phase 8). Until Phase 3, answers are escaped so they can't mention people or ping a channel (D-027), but they are not scanned for secrets. Don't point Phase 1 at threads that carry secrets or regulated data.
 
 ## Data inventory
 
