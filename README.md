@@ -6,11 +6,11 @@ The full specification is [docs/brief.md](docs/brief.md) (v2.2). The project is 
 
 ## Status
 
-**Phase 0 (foundations and decisions): built, awaiting gate review.** No Slack, agent or sandbox code exists yet; that starts in Phase 1.
+**Phase 0 passed its gate on 2026-10-26.** Phase 1 (Slack gateway and agent loop) is in progress.
 
 | Phase | Scope                                                                             | State       |
 | ----- | --------------------------------------------------------------------------------- | ----------- |
-| 0     | Scaffold, config, logging, local services, threat model, decisions, triage rubric | Gate review |
+| 0     | Scaffold, config, logging, local services, threat model, decisions, triage rubric | Passed      |
 | 1     | Slack gateway and agent loop (no sandbox)                                         | Not started |
 | 2     | Sandbox per thread                                                                | Not started |
 | 3     | Read-only connectors, secrets proxy, redaction                                    | Not started |

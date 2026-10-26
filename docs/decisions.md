@@ -2,7 +2,7 @@
 
 How to read this file:
 
-- **Proposed** decisions are yours to approve at the Phase 0 gate (D-001 to D-008). Nothing is built on them until you do.
+- **Approved** decisions (D-001 to D-008) were proposed in Phase 0 and approved at the Phase 0 gate.
 - **Defaulted** decisions were made during the build under working-agreement rule 5. Review them; change any you disagree with.
 - **Conflicts** record where the brief turned out to be wrong or impossible (rule 9).
 - Each phase gate is recorded at the bottom.
@@ -11,14 +11,14 @@ How to read this file:
 
 | ID    | Decision                          | Status    | Proposal in one line                                                                    |
 | ----- | --------------------------------- | --------- | --------------------------------------------------------------------------------------- |
-| D-001 | Runner placement                  | Proposed  | Runner outside the sandbox; built-ins off; repo never on the worker                     |
-| D-002 | Credential model                  | Proposed  | URL rewriting for git and registries; staging users visible to the model, low-privilege |
-| D-003 | Authorization model               | Proposed  | Project map in a reviewed config file; per-user reads; no self-approval                 |
-| D-004 | Run semantics                     | Proposed  | Retry only before the first tool call; otherwise mark interrupted and ask               |
-| D-005 | Slack transport in prod           | Proposed  | Socket Mode, no public ingress                                                          |
-| D-006 | Sandbox runtime                   | Proposed  | gVisor required outside dev; 1 GiB `/dev/shm`; Chromium sandbox tried first             |
-| D-007 | Data handling                     | Proposed  | Redaction rules, 365/90-day audit retention, ZDR path for regulated projects            |
-| D-008 | Warm start                        | Proposed  | Registry cache + git mirrors + Playwright browser cache behind the proxy                |
+| D-001 | Runner placement                  | Approved  | Runner outside the sandbox; built-ins off; repo never on the worker                     |
+| D-002 | Credential model                  | Approved  | URL rewriting for git and registries; staging users visible to the model, low-privilege |
+| D-003 | Authorization model               | Approved  | Project map in a reviewed config file; per-user reads; no self-approval                 |
+| D-004 | Run semantics                     | Approved  | Retry only before the first tool call; otherwise mark interrupted and ask               |
+| D-005 | Slack transport in prod           | Approved  | Socket Mode, no public ingress                                                          |
+| D-006 | Sandbox runtime                   | Approved  | gVisor required outside dev; 1 GiB `/dev/shm`; Chromium sandbox tried first             |
+| D-007 | Data handling                     | Approved  | Redaction rules, 365/90-day audit retention, ZDR path for regulated projects            |
+| D-008 | Warm start                        | Approved  | Registry cache + git mirrors + Playwright browser cache behind the proxy                |
 | D-009 | TypeScript 6.0                    | Defaulted | typescript-eslint doesn't support TypeScript 7 yet                                      |
 | D-010 | Repo and package name             | Defaulted | `madar`; the brief's `chat-agent/` root is this repo                                    |
 | D-011 | `src/shared/` folder              | Defaulted | Logger and correlation ids live outside the brief's layout                              |
@@ -30,7 +30,7 @@ How to read this file:
 
 ---
 
-## Proposed decisions
+## Approved decisions (Phase 0 gate)
 
 ### D-001 Runner placement
 
@@ -191,6 +191,6 @@ The workspace's network policy blocks Docker Hub, so images could not be pulled.
 
 ## Gate log
 
-| Gate    | Date    | Result | Notes                                                                         |
-| ------- | ------- | ------ | ----------------------------------------------------------------------------- |
-| Phase 0 | Pending |        | Awaiting review of the threat model, D-001 to D-008, the spike and the rubric |
+| Gate    | Date       | Result | Notes                                                                                                                                                              |
+| ------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Phase 0 | 2026-10-26 | Passed | Owner said "proceed" with no changes requested: D-001 to D-008 approved as proposed, C-001 (hostname-only limits for companion domains) accepted. Merged as PR #1. |
