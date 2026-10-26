@@ -3,7 +3,12 @@ import type { Logger } from 'pino';
 
 import { buildPrompt, PROGRESS_MARK } from '../agent/context.js';
 import type { AgentResult, AgentRunner } from '../agent/runner.js';
-import type { RunRecord, RunStore, TerminalStatus } from '../audit/run-store.js';
+import {
+  RunNotRunningError,
+  type RunRecord,
+  type RunStore,
+  type TerminalStatus,
+} from '../audit/run-store.js';
 import { finalText, text } from '../gateway/messages.js';
 import type { SlackApi } from '../gateway/slack-api.js';
 import { withCorrelationId } from '../shared/correlation.js';
@@ -99,10 +104,15 @@ export class RunProcessor {
     try {
       const run = await this.deps.store.getByJobId(jobId);
       if (run?.status === 'running') {
-        await this.deps.store.finish(run.id, { status: 'interrupted', outcome: 'stalled' });
+        await this.deps.store
+          .finish(run.id, { status: 'interrupted', outcome: 'stalled' })
+          .catch((error: unknown) => {
+            if (!(error instanceof RunNotRunningError)) throw error;
+          });
       }
       const ts = run?.placeholderTs ?? placeholder;
-      if (ts !== undefined && run?.postedAt == null) {
+      const posted = run !== undefined && run.postedAt !== null;
+      if (ts !== undefined && !posted) {
         await this.deps.slack.update(data.channelId, ts, text.interrupted(run?.id ?? jobId));
         if (run !== undefined) await this.deps.store.markPosted(run.id);
       }
@@ -291,7 +301,14 @@ export class RunProcessor {
       return;
     }
 
-    await slack.update(data.channelId, placeholderTs, finalText(result, run.id, stopperName));
+    try {
+      await slack.update(data.channelId, placeholderTs, finalText(result, run.id, stopperName));
+    } catch (error) {
+      // Recorded but not posted. The placeholder still shows progress, so a redelivery of
+      // this job, or the next look at the thread, shows it as unfinished.
+      log.error({ err: error }, 'outcome recorded but could not be posted to Slack');
+      return;
+    }
     await store.markPosted(run.id).catch((error: unknown) => {
       log.warn({ err: error }, 'answer posted but not marked; reconcile will settle it');
     });
@@ -348,6 +365,13 @@ export class RunProcessor {
     try {
       await this.deps.store.finish(run.id, { status, outcome, actor });
     } catch (error) {
+      if (error instanceof RunNotRunningError) {
+        this.deps.logger.warn(
+          { runId: run.id },
+          'run was already finished; leaving its message as is',
+        );
+        return;
+      }
       this.deps.logger.error({ err: error, runId: run.id }, 'could not record the run outcome');
       await this.writeFinal(data, run.placeholderTs ?? data.placeholderTs, text.auditUnavailable);
       return;

@@ -60,6 +60,14 @@ export interface BeginResult {
   readonly state: BeginState;
 }
 
+/** finish() on a run that already ended. Not an outage: someone else closed it first. */
+export class RunNotRunningError extends Error {
+  constructor(runId: string) {
+    super(`run ${runId} is not running`);
+    this.name = 'RunNotRunningError';
+  }
+}
+
 export interface AuditEventInput {
   readonly runId?: string | undefined;
   readonly kind: string;
@@ -214,7 +222,7 @@ export class PgRunStore implements RunStore {
           usage?.costUsd ?? 0,
         ],
       );
-      if (updated.rowCount !== 1) throw new Error(`run ${runId} is not running`);
+      if (updated.rowCount !== 1) throw new RunNotRunningError(runId);
       await this.insertEvent(client, {
         runId,
         kind: 'run.finished',

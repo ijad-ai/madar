@@ -7,7 +7,7 @@ import {
 } from '../../test/helpers/services.js';
 import { createPool, type Pool } from './db.js';
 import { assertMigrated, migrate } from './migrate.js';
-import { PgRunStore, type RunKey } from './run-store.js';
+import { PgRunStore, RunNotRunningError, type RunKey } from './run-store.js';
 
 let pool: Pool;
 let store: PgRunStore;
@@ -88,7 +88,7 @@ describe.skipIf(!HAS_SERVICES)('PgRunStore (Postgres)', () => {
     await store.finish(run.id, { status: 'cancelled', outcome: 'cancelled' });
     await expect(
       store.finish(run.id, { status: 'completed', outcome: 'completed' }),
-    ).rejects.toThrow(/is not running/);
+    ).rejects.toBeInstanceOf(RunNotRunningError);
   });
 
   it('records start, restart and finish in the audit log, with no message content', async () => {
