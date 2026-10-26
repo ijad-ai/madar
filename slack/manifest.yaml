@@ -1,0 +1,35 @@
+# Slack app manifest for Madar, Phase 1. Create the app from this file:
+# api.slack.com/apps → Create New App → From a manifest. See docs/slack-setup.md.
+#
+# Scopes are the minimum Phase 1 uses:
+#   app_mentions:read  receive @mentions
+#   chat:write         post the placeholder and edit it with the answer
+#   channels:history   read the thread for context (public channels)
+#   groups:history     read the thread for context (private channels)
+#   users:read         show people's names to the model instead of raw ids
+display_information:
+  name: Madar
+  description: QA agent for test automation (Phase 1 preview, no tools yet)
+features:
+  bot_user:
+    display_name: madar
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - channels:history
+      - groups:history
+      - users:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  # Socket Mode (D-005): no public endpoint. For HTTP mode, set this to false and add
+  # request_url: https://<your-host>/slack/events under event_subscriptions.
+  socket_mode_enabled: true
+  token_rotation_enabled: false
