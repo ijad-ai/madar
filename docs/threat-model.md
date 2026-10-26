@@ -1,0 +1,89 @@
+# Threat model
+
+Status: Phase 0 draft for gate review. Update it at every gate so it matches what was built.
+
+## Scope and stance
+
+The system reads content that anyone with write access to Jira, a repo, a CI log or the app under test can influence, and it acts with real credentials. So we assume the model **will** sometimes be manipulated, and design so that a manipulated model can only ask: it cannot read credentials, reach unapproved hosts, or perform a write that a human did not approve.
+
+## Assets
+
+| Asset                                                | Where it lives                        | Why it matters                                                            |
+| ---------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------- |
+| Connector tokens (GitHub, Jira)                      | Token vault in the connector service  | Read and write access to source and tickets                               |
+| Git and registry credentials                         | Egress proxy                          | Access to private repos and packages                                      |
+| Claude API key                                       | Worker process environment            | Spend, and access to the model under our account                          |
+| Slack bot token and signing secret                   | Gateway                               | Posting as the bot; forging inbound events                                |
+| Staging test-user credentials                        | Vault; visible to the model per D-002 | Access to staging apps and their data                                     |
+| Source code, CI logs, Playwright traces, screenshots | Sandbox workspace, connector          | May contain secrets, PII and unreleased product details                   |
+| Audit log                                            | Postgres                              | Complete record of prompts, outputs and actions; the most sensitive store |
+| Approval tokens                                      | Approval gate                         | Authority to perform one specific write                                   |
+| Workspace volumes                                    | Docker volumes, per thread            | Checked-out code and artifacts                                            |
+| Budget                                               | Claude API account                    | Runaway loops cost money                                                  |
+
+## Actors
+
+| Actor                     | Trust                                                                                             | Notes                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Requester                 | Authenticated employee in an allowlisted channel                                                  | May ask for things beyond their own access (confused deputy)   |
+| Other thread participants | Authenticated, but their messages are untrusted input                                             | Can steer the bot inside a thread                              |
+| Approver                  | Member of the project's approver group                                                            | Can be fatigued or misled by a preview                         |
+| Content author            | Anyone who can write a Jira ticket, PR, commit, CI output, or data rendered by the app under test | The main source of prompt injection                            |
+| Dependency author         | Maintainer of any package the sandbox installs                                                    | `postinstall` scripts run inside the sandbox                   |
+| Operator                  | Has infrastructure access                                                                         | Insider risk; audit and access control apply                   |
+| The model                 | Assumed manipulable                                                                               | Treated as an untrusted planner, never as an enforcement point |
+
+## Trust boundaries
+
+| ID  | Boundary                            | What crosses it             | Primary controls                                         |
+| --- | ----------------------------------- | --------------------------- | -------------------------------------------------------- |
+| TB1 | Slack to gateway                    | Events, button clicks       | Signature and timestamp check, dedupe, channel allowlist |
+| TB2 | Gateway and queue to worker         | Jobs (ids, not content)     | Internal network, Redis without public exposure          |
+| TB3 | Worker to Claude API                | Prompts and tool results    | Redaction first; API key only in the worker              |
+| TB4 | Worker to sandbox                   | Tool calls and their output | SandboxProvider API only; output truncated and redacted  |
+| TB5 | Sandbox to egress proxy to internet | All sandbox network traffic | Internal-only network, allowlist, no DNS, route scoping  |
+| TB6 | Connector layer to GitHub and Jira  | API calls with tokens       | Per-user access, channel map, approval tokens for writes |
+| TB7 | Approver to approval gate           | Approve or deny             | Approver group, preview from raw arguments, expiry       |
+| TB8 | Operators to infrastructure         | Admin access                | Least privilege, audit, runbook                          |
+
+## Threats
+
+Each threat lists its main controls and the phase that builds them. "Test" names the acceptance check that proves the control.
+
+| ID  | Threat                                        | Vector                                                                                                                                                         | Controls (phase)                                                                                                                                | Test                                                                           |
+| --- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| T1  | Indirect prompt injection                     | Instructions in Jira text, PR descriptions, code comments, CI logs, the app's DOM and accessibility tree (aria-labels, hidden or offscreen text), memory notes | Tool output treated as data in the system prompt (1); no credentials to steal (3); writes need approval tokens (5); injection eval suite (3, 8) | Seed suite in Phase 3; full suite gates CI in Phase 8                          |
+| T2  | Visual prompt injection                       | Text rendered in screenshots of the app or Jira attachments                                                                                                    | Same boundaries as T1; screenshots the agent takes mask sensitive elements; staging uses synthetic data (3)                                     | Screenshot case in the Phase 3 seed suite                                      |
+| T3  | Secret exfiltration via Slack replies         | Model echoes a secret it saw into the thread                                                                                                                   | Redaction on every Slack post (3); exact-match redaction of vault values (3); channel-visibility rule (1, 3)                                    | Canary secret never appears in Slack (3)                                       |
+| T4  | Secret exfiltration via allowlisted hosts     | Data sent to a staging app, a companion CDN, or in a query string                                                                                              | Hostname allowlist per project; companion domains reviewed (2); method limits only with TLS interception (see conflict C-001)                   | Blocked-domain tests (2); residual risk accepted for allowlisted staging hosts |
+| T5  | Exfiltration via DNS                          | Data encoded in DNS lookups                                                                                                                                    | No DNS from the sandbox; the proxy resolves names (2)                                                                                           | DNS queries from the sandbox fail (2)                                          |
+| T6  | Egress proxy as an authenticated oracle       | Sandbox sends arbitrary requests through a credentialed route                                                                                                  | Routes scoped by method and service path: `git-upload-pack` only, registry reads only, channel's repos only (3)                                 | Push, other repos and registry writes fail through the proxy (3)               |
+| T7  | Sandbox escape                                | Container breakout, kernel exploit, Docker socket                                                                                                              | gVisor, non-root, all caps dropped, seccomp, read-only root, no socket, no host mounts, no `--ipc=host` (2)                                     | Escape smoke tests (2)                                                         |
+| T8  | Cross-thread access                           | One thread reads another's workspace                                                                                                                           | One volume per thread, separate containers, internal network blocks sandbox-to-sandbox (2)                                                      | Concurrent-thread isolation test (2)                                           |
+| T9  | Confused deputy                               | Requester gets content they can't access; content posted to a wide channel                                                                                     | Per-user reads; channel-to-repo map; private channels only for private repos (D-003)                                                            | Access test with a user lacking repo access (3)                                |
+| T10 | Repo-supplied agent config runs on the worker | A checked-out repo ships `.claude/settings.json` hooks or `CLAUDE.md` instructions                                                                             | Agent SDK runs with `settingSources: []` and a `cwd` that is an empty per-run directory; repos exist only inside the sandbox (D-001)            | Phase 1 test: a planted settings file in `cwd` has no effect                   |
+| T11 | Memory poisoning                              | Injected content stored as a note and trusted later                                                                                                            | Notes are human-approved proposals; read back as untrusted data (7)                                                                             | Injected note cannot be stored without approval (7)                            |
+| T12 | Approval fatigue and misleading previews      | Approvers rubber-stamp; the model narrates something other than what will happen                                                                               | Previews rendered from raw arguments; tokens bound to payload hash; no self-approval by default; approval-time metrics (5, 8)                   | Preview matches raw args under injection (5)                                   |
+| T13 | Approval time-of-check, time-of-use           | Workspace changes after approval                                                                                                                               | Thread lock held while waiting; token bound to the exact diff (5)                                                                               | New message during wait doesn't touch the workspace (5)                        |
+| T14 | Runaway cost                                  | Agent loops, long tool runs, many threads                                                                                                                      | Per-run turn, token, USD and wall-clock limits (1); per-user and per-day budgets (5); concurrency limit (1)                                     | Budget breach ends the run with a clear message (1)                            |
+| T15 | Resource exhaustion in the sandbox            | Fork bomb, memory hog, disk fill                                                                                                                               | pids, memory and CPU limits; volume quotas; hard lifetime (2)                                                                                   | Fork bomb and memory hog contained (2)                                         |
+| T16 | Destructive external actions                  | Deleting branches, closing tickets, mutating shared data                                                                                                       | Write tools absent until Phase 5, then Tier 2; production hosts blocked (3, 5)                                                                  | Tier 2 can't run without a token (5)                                           |
+| T17 | Malicious dependency                          | `postinstall` in the repo under test                                                                                                                           | Runs only inside the sandbox; egress allowlist limits where it can send data (2)                                                                | Covered by T5, T7 and egress tests                                             |
+| T18 | Forged or replayed Slack requests             | Attacker posts to the gateway                                                                                                                                  | Signature and timestamp window, dedupe by event id (1)                                                                                          | Fake-payload integration test (1)                                              |
+| T19 | Sensitive data in logs and audit              | Secrets or PII in log lines or audit rows                                                                                                                      | Config errors never print values (0); logger redacts by key (0); content redaction before audit writes (3); encryption and retention (D-007)    | Config and logger tests (0, built)                                             |
+| T20 | Log injection                                 | Crafted ids create fake log lines                                                                                                                              | Inbound correlation ids validated, others replaced (0)                                                                                          | Logger test (0, built)                                                         |
+| T21 | Claude API key theft                          | Key read from the sandbox                                                                                                                                      | Key exists only in the worker; Agent SDK `env` passes a minimal environment; sandbox has no route to the key (1, D-001)                         | Phase 2 test: key absent from sandbox env and disk                             |
+| T22 | Data retained at the model provider           | Prompts with sensitive content kept by the provider                                                                                                            | ZDR where available; avoid non-ZDR features for regulated projects (D-007)                                                                      | Contract check, not a code test                                                |
+| T23 | Queue flooding                                | One user starts many runs                                                                                                                                      | Per-user rate limit and budgets (1, 5)                                                                                                          | Rate-limit test (1)                                                            |
+
+## Top risks to watch
+
+1. **T1 and T2, prompt injection.** It cannot be prevented, only contained. The containment is T6 plus T16: if those hold, injection degrades answers but cannot leak credentials or write anything.
+2. **T4, allowlisted staging hosts.** Hostname allowlisting cannot stop data being sent to an allowed host. Keep companion lists short and reviewed.
+3. **T12, approval fatigue.** The control is as good as the approvers. Watch time-to-approve in Phase 8.
+4. **T7, sandbox escape.** gVisor is the difference between a container bug and a host compromise; D-006 makes it required outside dev.
+5. **T10, repo-supplied agent config.** Easy to miss and cheap to prevent; locked down in D-001.
+
+## Out of scope
+
+Slack's and Anthropic's own infrastructure security, the physical and OS security of our hosts, and the security of the staging applications themselves.

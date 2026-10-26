@@ -1,0 +1,49 @@
+{
+  "id": "tri-9002",
+  "synthetic": true,
+  "source": {
+    "ciSystem": "github-actions",
+    "repoAlias": "repo-example-shop",
+    "runRef": "run-9f8e7d6c5b4a",
+    "failedOn": "2026-08"
+  },
+  "test": {
+    "framework": "playwright",
+    "fileAlias": "tests/account/login.spec.ts",
+    "title": "signs in with SSO",
+    "browser": "chromium"
+  },
+  "evidence": {
+    "errorMessage": "Error: page.goto: net::ERR_CONNECTION_TIMED_OUT at https://sso.example.test/authorize",
+    "logExcerpt": "Same spec passed on the automatic retry four minutes later. Two other suites in the same run timed out against sso.example.test.",
+    "retry": "passed-on-retry",
+    "hasTrace": true,
+    "hasScreenshot": false,
+    "artifacts": []
+  },
+  "labels": [
+    {
+      "labeler": "L1",
+      "class": "flaky-test",
+      "confidence": "medium",
+      "rationale": "Passed on retry without any change."
+    },
+    {
+      "labeler": "L2",
+      "class": "environment",
+      "confidence": "high",
+      "rationale": "Identity provider timed out for several suites in the same run."
+    }
+  ],
+  "adjudication": {
+    "class": "environment",
+    "by": "L3",
+    "note": "Cause is outside the test: the identity provider was unreachable across suites."
+  },
+  "finalClass": "environment",
+  "anonymization": {
+    "procedureVersion": 1,
+    "reviewedBy": "L3",
+    "reviewedOn": "2026-10-25"
+  }
+}
